@@ -1,0 +1,53 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "BurnInX",
+  "version": "2.8.0",
+  "identifier": "com.burninx.stresstest",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:3000",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "BurnInX - GPU、CPU 与内存综合压力测试工具",
+        "width": 1280,
+        "height": 860,
+        "minWidth": 1000,
+        "minHeight": 680,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": true,
+        "transparent": false,
+        "theme": "Dark"
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["msi", "nsis"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "certificateThumbprint": null,
+      "digestAlgorithm": "sha256",
+      "timestampUrl": "",
+      "nsis": {
+        "displayLanguageSelector": false,
+        "installerIcon": "icons/icon.ico"
+      }
+    }
+  },
+  "plugins": {
+    "opener": {}
+  }
+}
