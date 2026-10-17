@@ -57,15 +57,17 @@ export const TelemetrySensorsPanel: React.FC<TelemetrySensorsPanelProps> = ({
       ctx.stroke();
     }
 
-    if (telemetry.length < 2) {
+    if (telemetry.length === 0) {
       ctx.fillStyle = '#64748b';
       ctx.font = '12px ui-monospace, monospace';
-      ctx.fillText('等待压力测试数据样本采集中 (采集间隔 500ms)...', 40, h / 2);
+      ctx.fillText('等待压力测试启动，点击「一键全系统三烤」或单项测试开始采集...', 40, h / 2);
       return;
     }
 
-    const maxPoints = 50;
-    const dataSlice = telemetry.slice(-maxPoints);
+    const maxPoints = 60;
+    // If only 1 sample, duplicate so lines can draw
+    const rawData = telemetry.length === 1 ? [telemetry[0], telemetry[0]] : telemetry;
+    const dataSlice = rawData.slice(-maxPoints);
     const plotW = w - 50;
     const plotH = h - 50;
     const offsetX = 35;
@@ -74,7 +76,7 @@ export const TelemetrySensorsPanel: React.FC<TelemetrySensorsPanelProps> = ({
     // 1. Draw FPS Line (Blue)
     const maxFps = Math.max(60, ...dataSlice.map((d) => d.fps || 0)) * 1.15;
     ctx.strokeStyle = '#3b82f6';
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 2.5;
     ctx.beginPath();
     dataSlice.forEach((d, i) => {
       const x = offsetX + (i / (dataSlice.length - 1)) * plotW;
@@ -84,7 +86,35 @@ export const TelemetrySensorsPanel: React.FC<TelemetrySensorsPanelProps> = ({
     });
     ctx.stroke();
 
-    // 2. Draw GPU Temperature Line (Red)
+    // 2. Draw CPU GFLOPS Line (Cyan)
+    const maxGflops = Math.max(10, ...dataSlice.map((d) => d.cpuGflops || 0)) * 1.2;
+    ctx.strokeStyle = '#06b6d4';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    dataSlice.forEach((d, i) => {
+      const x = offsetX + (i / (dataSlice.length - 1)) * plotW;
+      const y = offsetY + plotH - ((d.cpuGflops || 0) / maxGflops) * plotH;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    // 3. Draw RAM Bandwidth Line (Yellow)
+    const maxRam = Math.max(500, ...dataSlice.map((d) => d.ramBandwidthMbS || 0)) * 1.2;
+    ctx.strokeStyle = '#eab308';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    dataSlice.forEach((d, i) => {
+      const x = offsetX + (i / (dataSlice.length - 1)) * plotW;
+      const y = offsetY + plotH - ((d.ramBandwidthMbS || 0) / maxRam) * plotH;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // 4. Draw GPU Temperature Line (Red)
     const maxTemp = 100;
     const minTemp = 35;
     ctx.strokeStyle = '#ef4444';
@@ -98,7 +128,7 @@ export const TelemetrySensorsPanel: React.FC<TelemetrySensorsPanelProps> = ({
     });
     ctx.stroke();
 
-    // 3. Draw CPU Temperature Line (Emerald)
+    // 5. Draw CPU Temperature Line (Emerald)
     ctx.strokeStyle = '#10b981';
     ctx.lineWidth = 1.5;
     ctx.beginPath();
@@ -110,7 +140,7 @@ export const TelemetrySensorsPanel: React.FC<TelemetrySensorsPanelProps> = ({
     });
     ctx.stroke();
 
-    // 4. Draw 90°C Thermal Warning Line
+    // 6. Draw 90°C Thermal Warning Line
     const warnY = offsetY + plotH - ((90 - minTemp) / (maxTemp - minTemp)) * plotH;
     ctx.strokeStyle = '#dc2626';
     ctx.setLineDash([4, 4]);
@@ -242,18 +272,26 @@ export const TelemetrySensorsPanel: React.FC<TelemetrySensorsPanelProps> = ({
             <Activity className="w-5 h-5 text-cyan-400" />
             <h3 className="font-bold text-slate-100">实时时序遥测示波器</h3>
           </div>
-          <div className="flex items-center gap-4 text-xs">
+          <div className="flex flex-wrap items-center gap-3 text-xs">
             <span className="flex items-center gap-1.5 text-blue-400 font-mono">
               <span className="w-2.5 h-1 bg-blue-500 rounded-full" />
-              渲染 FPS
+              FPS
+            </span>
+            <span className="flex items-center gap-1.5 text-cyan-400 font-mono">
+              <span className="w-2.5 h-1 bg-cyan-500 rounded-full" />
+              CPU GFLOPS
+            </span>
+            <span className="flex items-center gap-1.5 text-amber-400 font-mono">
+              <span className="w-2.5 h-1 bg-amber-500 rounded-full" />
+              内存 MB/s
             </span>
             <span className="flex items-center gap-1.5 text-rose-400 font-mono">
               <span className="w-2.5 h-1 bg-rose-500 rounded-full" />
-              GPU 核心温 (°C)
+              GPU 温
             </span>
             <span className="flex items-center gap-1.5 text-emerald-400 font-mono">
               <span className="w-2.5 h-1 bg-emerald-500 rounded-full" />
-              CPU 封装温 (°C)
+              CPU 温
             </span>
           </div>
         </div>

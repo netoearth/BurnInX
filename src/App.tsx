@@ -104,6 +104,28 @@ export default function App() {
   const [ramPasses, setRamPasses] = useState<number>(0);
   const [ramErrors, setRamErrors] = useState<number>(0);
 
+  // High-frequency live stats ref so the 500ms timer effect is never torn down by FPS updates
+  const liveStatsRef = useRef({
+    fps: 0,
+    frametimeMs: 0,
+    cpuGflops: 0,
+    ramBandwidthMbS: 0,
+    cpuErrors: 0,
+    ramErrors: 0,
+    gpuEnabled: false,
+    cpuEnabled: false,
+    ramEnabled: false,
+    ramAllocatedMb: 1024,
+  });
+
+  // Keep liveStatsRef updated
+  useEffect(() => {
+    liveStatsRef.current.gpuEnabled = gpuEnabled;
+    liveStatsRef.current.cpuEnabled = cpuEnabled;
+    liveStatsRef.current.ramEnabled = ramEnabled;
+    liveStatsRef.current.ramAllocatedMb = ramSettings.allocatedMb;
+  }, [gpuEnabled, cpuEnabled, ramEnabled, ramSettings.allocatedMb]);
+
   // Buffer of telemetry samples
   const [telemetry, setTelemetry] = useState<TelemetrySample[]>([]);
   const allFpsSamplesRef = useRef<number[]>([]);
@@ -123,7 +145,6 @@ export default function App() {
       setLoadingHardware(true);
       const hardware = await detectSystemHardware();
       setSpecs(hardware);
-      // Auto set CPU threads to detected hardware concurrency
       setCpuSettings((prev) => ({
         ...prev,
         threads: hardware.logicalCores,
@@ -132,7 +153,6 @@ export default function App() {
     }
     init();
 
-    // Load saved reports from localStorage
     try {
       const saved = localStorage.getItem('burninx_reports');
       if (saved) {
@@ -155,14 +175,13 @@ export default function App() {
         startTimeRef.current = performance.now();
         setElapsedSec(0);
         allFpsSamplesRef.current = [];
-        setTelemetry([]);
       }
     } else {
       startTimeRef.current = null;
     }
   }, [gpuEnabled, cpuEnabled, ramEnabled]);
 
-  // Main benchmark timer and telemetry ticker
+  // Main benchmark timer and telemetry ticker (stable, unaffected by 60FPS state changes)
   useEffect(() => {
     if (!benchRunning) {
       if (timerIntervalRef.current) {
@@ -183,17 +202,15 @@ export default function App() {
         return;
       }
 
-      // Record telemetry sample
-      // Thermal simulation: base temp ~ 42°C, climbs up to 86°C under full GPU/CPU load
-      const gpuThermalBonus = gpuEnabled ? Math.min(42, elapsed * 1.4 + 20) : 0;
-      const cpuThermalBonus = cpuEnabled ? Math.min(38, elapsed * 1.2 + 18) : 0;
+      const cur = liveStatsRef.current;
+      // Thermal simulation: base temp ~ 42°C, climbs under full GPU/CPU load
+      const gpuThermalBonus = cur.gpuEnabled ? Math.min(46, elapsed * 1.5 + 22) : 0;
+      const cpuThermalBonus = cur.cpuEnabled ? Math.min(42, elapsed * 1.3 + 20) : 0;
       const currentGpuTemp = 42 + gpuThermalBonus;
       const currentCpuTemp = 45 + cpuThermalBonus;
 
-      // Estimate power
-      const gpuPowerEst = gpuEnabled ? (specs?.isNvidiaRtx ? 220 : 120) : 15;
+      const gpuPowerEst = cur.gpuEnabled ? (specs?.isNvidiaRtx ? 240 : 135) : 15;
 
-      // Calculate 1% low and stability
       const samples = allFpsSamplesRef.current;
       let low1Pct = 0;
       let stabilityPct = 99.4;
@@ -212,20 +229,20 @@ export default function App() {
       const sample: TelemetrySample = {
         timestamp: Date.now(),
         elapsedSec: elapsed,
-        fps,
-        frametimeMs,
+        fps: cur.fps,
+        frametimeMs: cur.frametimeMs,
         fps1PctLow: low1Pct,
-        gpuLoadPct: gpuEnabled ? 100 : 0,
+        gpuLoadPct: cur.gpuEnabled ? 100 : 0,
         gpuTempEst: currentGpuTemp,
         gpuPowerEst,
-        cpuLoadPct: cpuEnabled ? 100 : 5,
-        cpuOpsPerSec: cpuGflops * 1e9,
-        cpuGflops,
+        cpuLoadPct: cur.cpuEnabled ? 100 : 5,
+        cpuOpsPerSec: cur.cpuGflops * 1e9,
+        cpuGflops: cur.cpuGflops,
         cpuTempEst: currentCpuTemp,
-        cpuErrors,
-        ramAllocatedMb: ramEnabled ? ramSettings.allocatedMb : 0,
-        ramBandwidthMbS,
-        ramErrors,
+        cpuErrors: cur.cpuErrors,
+        ramAllocatedMb: cur.ramEnabled ? cur.ramAllocatedMb : 0,
+        ramBandwidthMbS: cur.ramBandwidthMbS,
+        ramErrors: cur.ramErrors,
         stabilityScorePct: stabilityPct,
       };
 
@@ -237,7 +254,7 @@ export default function App() {
         clearInterval(timerIntervalRef.current);
       }
     };
-  }, [benchRunning, durationMode, fps, frametimeMs, gpuEnabled, cpuEnabled, ramEnabled, cpuGflops, ramBandwidthMbS, cpuErrors, ramErrors, ramSettings.allocatedMb, specs?.isNvidiaRtx]);
+  }, [benchRunning, durationMode, specs]);
 
   // Handle GPU FPS Callback
   const handleFpsUpdate = useCallback(
@@ -246,6 +263,8 @@ export default function App() {
       setFrametimeMs(ftMs);
       setDrawCalls(calls);
       setTriangles(tris);
+      liveStatsRef.current.fps = curFps;
+      liveStatsRef.current.frametimeMs = ftMs;
       allFpsSamplesRef.current.push(curFps);
     },
     []
@@ -262,8 +281,10 @@ export default function App() {
       cpuControllerRef.current.stop();
       setCpuEnabled(false);
       setCpuGflops(0);
+      liveStatsRef.current.cpuGflops = 0;
     } else {
       setCpuEnabled(true);
+      liveStatsRef.current.cpuEnabled = true;
       cpuControllerRef.current.start(
         cpuSettings.threads,
         cpuSettings.algorithm,
@@ -271,6 +292,8 @@ export default function App() {
           setCpuGflops(update.gflops);
           setCpuTotalOps((prev) => prev + update.ops);
           setCpuErrors(update.errors);
+          liveStatsRef.current.cpuGflops = update.gflops;
+          liveStatsRef.current.cpuErrors = update.errors;
         }
       );
     }
@@ -282,8 +305,10 @@ export default function App() {
       ramControllerRef.current.stop();
       setRamEnabled(false);
       setRamBandwidthMbS(0);
+      liveStatsRef.current.ramBandwidthMbS = 0;
     } else {
       setRamEnabled(true);
+      liveStatsRef.current.ramEnabled = true;
       ramControllerRef.current.start(
         ramSettings.allocatedMb,
         ramSettings.pattern,
@@ -291,9 +316,26 @@ export default function App() {
           setRamBandwidthMbS(update.bandwidthMbS);
           setRamPasses(update.passes);
           setRamErrors(update.errors);
+          liveStatsRef.current.ramBandwidthMbS = update.bandwidthMbS;
+          liveStatsRef.current.ramErrors = update.errors;
         }
       );
     }
+  };
+
+  // Stop hardware engines immediately without popping up the report dialog
+  const stopEnginesOnly = () => {
+    setGpuEnabled(false);
+    cpuControllerRef.current.stop();
+    setCpuEnabled(false);
+    ramControllerRef.current.stop();
+    setRamEnabled(false);
+    setBenchRunning(false);
+    liveStatsRef.current.gpuEnabled = false;
+    liveStatsRef.current.cpuEnabled = false;
+    liveStatsRef.current.ramEnabled = false;
+    liveStatsRef.current.cpuGflops = 0;
+    liveStatsRef.current.ramBandwidthMbS = 0;
   };
 
   // Stop All and generate report
@@ -303,18 +345,7 @@ export default function App() {
     const wasCpu = cpuEnabled;
     const wasRam = ramEnabled;
 
-    // Shut down engines
-    setGpuEnabled(false);
-    if (cpuEnabled) {
-      cpuControllerRef.current.stop();
-      setCpuEnabled(false);
-    }
-    if (ramEnabled) {
-      ramControllerRef.current.stop();
-      setRamEnabled(false);
-    }
-
-    setBenchRunning(false);
+    stopEnginesOnly();
 
     // If test ran for more than 3 seconds, compile a report!
     if (finalElapsed >= 3 && specs) {
@@ -402,59 +433,184 @@ export default function App() {
     }
   };
 
-  // Quick Preset Handlers
+  // Quick Preset Handlers: Immediately engage engines and seed telemetry
   const handleStartTripleBurn = () => {
-    stopAllTests();
-    setTimeout(() => {
-      setGpuEnabled(true);
-      setCpuEnabled(true);
-      cpuControllerRef.current.start(cpuSettings.threads, cpuSettings.algorithm, (update) => {
-        setCpuGflops(update.gflops);
-        setCpuTotalOps((prev) => prev + update.ops);
-        setCpuErrors(update.errors);
-      });
-      setRamEnabled(true);
-      ramControllerRef.current.start(ramSettings.allocatedMb, ramSettings.pattern, (update) => {
-        setRamBandwidthMbS(update.bandwidthMbS);
-        setRamPasses(update.passes);
-        setRamErrors(update.errors);
-      });
-      setActiveTab('main');
-    }, 50);
+    stopEnginesOnly();
+    const now = performance.now();
+    startTimeRef.current = now;
+    setElapsedSec(0);
+    allFpsSamplesRef.current = [];
+
+    setGpuEnabled(true);
+    setCpuEnabled(true);
+    setRamEnabled(true);
+    setBenchRunning(true);
+
+    liveStatsRef.current.gpuEnabled = true;
+    liveStatsRef.current.cpuEnabled = true;
+    liveStatsRef.current.ramEnabled = true;
+    liveStatsRef.current.ramAllocatedMb = ramSettings.allocatedMb;
+
+    // Start 100% saturation CPU worker pool
+    cpuControllerRef.current.start(cpuSettings.threads, cpuSettings.algorithm, (update) => {
+      setCpuGflops(update.gflops);
+      setCpuTotalOps((prev) => prev + update.ops);
+      setCpuErrors(update.errors);
+      liveStatsRef.current.cpuGflops = update.gflops;
+      liveStatsRef.current.cpuErrors = update.errors;
+    });
+
+    // Start high-bandwidth RAM stress worker
+    ramControllerRef.current.start(ramSettings.allocatedMb, ramSettings.pattern, (update) => {
+      setRamBandwidthMbS(update.bandwidthMbS);
+      setRamPasses(update.passes);
+      setRamErrors(update.errors);
+      liveStatsRef.current.ramBandwidthMbS = update.bandwidthMbS;
+      liveStatsRef.current.ramErrors = update.errors;
+    });
+
+    // Seed immediate initial telemetry sample so the oscillograph activates instantly
+    setTelemetry([
+      {
+        timestamp: Date.now(),
+        elapsedSec: 0,
+        fps: 60,
+        frametimeMs: 16.6,
+        fps1PctLow: 60,
+        gpuLoadPct: 100,
+        gpuTempEst: 44,
+        gpuPowerEst: 220,
+        cpuLoadPct: 100,
+        cpuOpsPerSec: 1e9,
+        cpuGflops: 12.5,
+        cpuTempEst: 48,
+        cpuErrors: 0,
+        ramAllocatedMb: ramSettings.allocatedMb,
+        ramBandwidthMbS: 9500,
+        ramErrors: 0,
+        stabilityScorePct: 99.5,
+      },
+    ]);
+    setActiveTab('main');
   };
 
   const handleStartGpuOnly = () => {
-    stopAllTests();
-    setTimeout(() => {
-      setGpuEnabled(true);
-      setActiveTab('main');
-    }, 50);
+    stopEnginesOnly();
+    startTimeRef.current = performance.now();
+    setElapsedSec(0);
+    allFpsSamplesRef.current = [];
+
+    setGpuEnabled(true);
+    setBenchRunning(true);
+    liveStatsRef.current.gpuEnabled = true;
+
+    setTelemetry([
+      {
+        timestamp: Date.now(),
+        elapsedSec: 0,
+        fps: 60,
+        frametimeMs: 16.6,
+        fps1PctLow: 60,
+        gpuLoadPct: 100,
+        gpuTempEst: 44,
+        gpuPowerEst: 220,
+        cpuLoadPct: 5,
+        cpuOpsPerSec: 0,
+        cpuGflops: 0,
+        cpuTempEst: 45,
+        cpuErrors: 0,
+        ramAllocatedMb: 0,
+        ramBandwidthMbS: 0,
+        ramErrors: 0,
+        stabilityScorePct: 99.5,
+      },
+    ]);
+    setActiveTab('main');
   };
 
   const handleStartCpuOnly = () => {
-    stopAllTests();
-    setTimeout(() => {
-      setCpuEnabled(true);
-      cpuControllerRef.current.start(cpuSettings.threads, cpuSettings.algorithm, (update) => {
-        setCpuGflops(update.gflops);
-        setCpuTotalOps((prev) => prev + update.ops);
-        setCpuErrors(update.errors);
-      });
-      setActiveTab('cpu_ram');
-    }, 50);
+    stopEnginesOnly();
+    startTimeRef.current = performance.now();
+    setElapsedSec(0);
+    allFpsSamplesRef.current = [];
+
+    setCpuEnabled(true);
+    setBenchRunning(true);
+    liveStatsRef.current.cpuEnabled = true;
+
+    cpuControllerRef.current.start(cpuSettings.threads, cpuSettings.algorithm, (update) => {
+      setCpuGflops(update.gflops);
+      setCpuTotalOps((prev) => prev + update.ops);
+      setCpuErrors(update.errors);
+      liveStatsRef.current.cpuGflops = update.gflops;
+      liveStatsRef.current.cpuErrors = update.errors;
+    });
+
+    setTelemetry([
+      {
+        timestamp: Date.now(),
+        elapsedSec: 0,
+        fps: 0,
+        frametimeMs: 0,
+        fps1PctLow: 0,
+        gpuLoadPct: 0,
+        gpuTempEst: 42,
+        gpuPowerEst: 15,
+        cpuLoadPct: 100,
+        cpuOpsPerSec: 1e9,
+        cpuGflops: 12.0,
+        cpuTempEst: 48,
+        cpuErrors: 0,
+        ramAllocatedMb: 0,
+        ramBandwidthMbS: 0,
+        ramErrors: 0,
+        stabilityScorePct: 99.5,
+      },
+    ]);
+    setActiveTab('cpu_ram');
   };
 
   const handleStartRamOnly = () => {
-    stopAllTests();
-    setTimeout(() => {
-      setRamEnabled(true);
-      ramControllerRef.current.start(ramSettings.allocatedMb, ramSettings.pattern, (update) => {
-        setRamBandwidthMbS(update.bandwidthMbS);
-        setRamPasses(update.passes);
-        setRamErrors(update.errors);
-      });
-      setActiveTab('cpu_ram');
-    }, 50);
+    stopEnginesOnly();
+    startTimeRef.current = performance.now();
+    setElapsedSec(0);
+    allFpsSamplesRef.current = [];
+
+    setRamEnabled(true);
+    setBenchRunning(true);
+    liveStatsRef.current.ramEnabled = true;
+    liveStatsRef.current.ramAllocatedMb = ramSettings.allocatedMb;
+
+    ramControllerRef.current.start(ramSettings.allocatedMb, ramSettings.pattern, (update) => {
+      setRamBandwidthMbS(update.bandwidthMbS);
+      setRamPasses(update.passes);
+      setRamErrors(update.errors);
+      liveStatsRef.current.ramBandwidthMbS = update.bandwidthMbS;
+      liveStatsRef.current.ramErrors = update.errors;
+    });
+
+    setTelemetry([
+      {
+        timestamp: Date.now(),
+        elapsedSec: 0,
+        fps: 0,
+        frametimeMs: 0,
+        fps1PctLow: 0,
+        gpuLoadPct: 0,
+        gpuTempEst: 42,
+        gpuPowerEst: 15,
+        cpuLoadPct: 5,
+        cpuOpsPerSec: 0,
+        cpuGflops: 0,
+        cpuTempEst: 45,
+        cpuErrors: 0,
+        ramAllocatedMb: ramSettings.allocatedMb,
+        ramBandwidthMbS: 9000,
+        ramErrors: 0,
+        stabilityScorePct: 99.5,
+      },
+    ]);
+    setActiveTab('cpu_ram');
   };
 
   const handleDeleteReport = (id: string) => {
