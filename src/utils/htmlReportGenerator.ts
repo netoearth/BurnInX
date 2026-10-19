@@ -347,6 +347,10 @@ export function generateHtmlReport(report: BenchmarkReport): string {
         <td>${specs.memorySpecsDescription || (specs.deviceMemoryGb ? `${specs.deviceMemoryGb} GB 物理内存` : '16 GB DDR4/DDR5 双通道')}</td>
       </tr>
       <tr>
+        <th>存储设备与分区</th>
+        <td>${specs.availableDrives?.map((d) => `<strong>[${d.letter}]</strong> ${d.label} (可用 ${d.freeGb}G / 总 ${d.totalGb}G)`).join(' &bull; ') || 'C:, D:'}</td>
+      </tr>
+      <tr>
         <th>供电与电池状态</th>
         <td>${specs.batteryStatus.powerSource === 'AC_ADAPTER' ? '🔌 交流电源已连接 (最高性能模式)' : '🔋 电池供电运行'}</td>
       </tr>

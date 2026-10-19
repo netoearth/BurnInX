@@ -186,45 +186,68 @@ fn get_available_disks() -> Vec<NativeDriveInfo> {
 
     #[cfg(target_os = "windows")]
     {
-        // Probe all common drive letters from C to Z
-        let drive_letters = [
-            'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'
-        ];
+        // Query real drives, real volume names and real sizes via PowerShell CIM
+        if let Ok(output) = std::process::Command::new("powershell")
+            .args(&[
+                "-NoProfile",
+                "-Command",
+                "Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' | ForEach-Object { \"$($_.DeviceID)|$($_.VolumeName)|$([math]::Round($_.Size/1GB, 1))|$([math]::Round($_.FreeSpace/1GB, 1))\" }"
+            ])
+            .output()
+        {
+            if output.status.success() {
+                let text = String::from_utf8_lossy(&output.stdout);
+                for line in text.lines() {
+                    let parts: Vec<&str> = line.trim().split('|').collect();
+                    if parts.len() >= 4 {
+                        let letter = parts[0].trim();
+                        let vol_name = parts[1].trim();
+                        let total: f64 = parts[2].trim().parse().unwrap_or(512.0);
+                        let free: f64 = parts[3].trim().parse().unwrap_or(200.0);
+                        if !letter.is_empty() {
+                            let label = if !vol_name.is_empty() {
+                                format!("{} ({})", vol_name, letter)
+                            } else if letter.starts_with("C") {
+                                "Windows 系统盘 (OS)".to_string()
+                            } else {
+                                format!("本地数据盘 ({})", letter)
+                            };
 
-        for &letter in &drive_letters {
-            let path_str = format!("{}:\\", letter);
-            let p = Path::new(&path_str);
-            if p.exists() {
-                let mut label = match letter {
-                    'C' => "Windows 系统盘 (OS)".to_string(),
-                    'D' => "本地软件与数据盘 (Data)".to_string(),
-                    'G' => "项目与开发磁盘 (Dev)".to_string(),
-                    _ => format!("本地逻辑磁盘 ({}:)", letter),
-                };
-
-                // Default estimated sizes if detailed query unavailable
-                let mut total_gb = 512.0;
-                let mut free_gb = 240.0;
-
-                // Try query volume label
-                if let Ok(md) = fs::metadata(p) {
-                    if md.is_dir() {
-                        drives.push(NativeDriveInfo {
-                            drive_letter: format!("{}:", letter),
-                            path: path_str,
-                            label,
-                            total_gb,
-                            free_gb,
-                            is_ready: true,
-                        });
+                            drives.push(NativeDriveInfo {
+                                drive_letter: letter.to_string(),
+                                path: format!("{}\\", letter),
+                                label,
+                                total_gb: total,
+                                free_gb: free,
+                                is_ready: true,
+                            });
+                        }
                     }
+                }
+            }
+        }
+
+        // If CIM failed, fallback to probing existing drive letters
+        if drives.is_empty() {
+            let drive_letters = ['C', 'D', 'E', 'F', 'G', 'H'];
+            for &letter in &drive_letters {
+                let path_str = format!("{}:\\", letter);
+                let p = Path::new(&path_str);
+                if p.exists() {
+                    drives.push(NativeDriveInfo {
+                        drive_letter: format!("{}:", letter),
+                        path: path_str,
+                        label: if letter == 'C' { "Windows 系统盘 (C:)".to_string() } else { format!("本地驱动器 ({}:)", letter) },
+                        total_gb: 512.0,
+                        free_gb: 256.0,
+                        is_ready: true,
+                    });
                 }
             }
         }
     }
 
     if drives.is_empty() {
-        // Fallback to current working directory drive
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         drives.push(NativeDriveInfo {
             drive_letter: "C:".to_string(),
@@ -275,7 +298,11 @@ fn benchmark_disk_native(drive_path: Option<String>, size_mb: Option<u64>) -> Re
 
     let target_dir = if let Some(ref dp) = drive_path {
         let p = PathBuf::from(dp);
-        if p.exists() {
+        // Create a non-privileged subfolder to avoid UAC write block at drive root
+        let subfolder = p.join(".burninx_benchmark_temp");
+        if fs::create_dir_all(&subfolder).is_ok() {
+            subfolder
+        } else if p.exists() {
             p
         } else {
             std::env::temp_dir()

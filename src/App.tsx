@@ -1105,7 +1105,10 @@ export default function App() {
         )}
 
         {activeTab === 'disk' && (
-          <DiskBenchmarkPanel availableDrives={specs?.availableDrives} />
+          <DiskBenchmarkPanel
+            availableDrives={specs?.availableDrives}
+            onDrivesUpdated={refreshHardwareSpecs}
+          />
         )}
 
         {activeTab === 'network' && (
