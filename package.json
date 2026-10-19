@@ -39,5 +39,11 @@
     "tailwindcss": "^4.3.3",
     "tsx": "^4.21.0",
     "typescript": "^7.0.2"
+  },
+  "optionalDependencies": {
+    "@esbuild/win32-arm64": "0.28.2",
+    "@esbuild/win32-x64": "0.28.2",
+    "@rolldown/binding-win32-arm64-msvc": "1.2.14",
+    "@rolldown/binding-win32-x64-msvc": "1.2.14"
   }
 }
