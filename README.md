@@ -220,11 +220,44 @@ npm run tauri dev
 ```
 将启动本地 Rust 后端并唤起原生桌面窗口。
 
-### 3. 构建发布安装包
+### 3. 本地构建发布安装包
 ```bash
 npm run build:tauri
 ```
 编译产物将生成在 `src-tauri/target/release/bundle/` 目录下（包括 `.msi` 安装包与 `.exe` 安装引导程序）。
+
+---
+
+## 🤖 GitHub Actions 自动化编译与全平台发布流程
+
+本项目配置了完整的 GitHub Actions CI/CD 自动化流水线，已按照 GitHub 官方发布流程完成深度检查与加固：
+
+### 1. 自动化流水线架构
+| 工作流 | 触发条件 | 执行任务 | 构建产物 |
+| :--- | :--- | :--- | :--- |
+| **`CI 质量与构建检查`** (`ci.yml`) | `main`/`master` 分支 push / PR | • `npm ci` 依赖校验<br>• TypeScript 严格语法检查 (`tsc --noEmit`)<br>• Web 前端生产打包<br>• Windows 原生 Rust 检查 (`cargo check`) | 保证合并前零编译报错 |
+| **`Release 自动化发布`** (`release.yml`) | 推送 `v*` 标签或手动在 Actions 页面点击触发 (`workflow_dispatch`) | • 初始化 GitHub Release（防并发冲突）<br>• Windows x64 桌面端构建<br>• Windows ARM64 桌面端构建<br>• Web 独立离线版打包 | 自动生成 Release 并附加全套安装包 |
+
+### 2. 自动化触发发布步骤
+- **方式 A（推荐）：Git 标签自动触发**
+  ```bash
+  # 创建版本标签并推送到 GitHub
+  git tag v2.8.0
+  git push origin v2.8.0
+  ```
+  GitHub Actions 将自动感知标签，自动创建对应 Release 并并行启动构建矩阵。
+
+- **方式 B：GitHub 网页手动点击触发**
+  1. 打开 GitHub 仓库，进入 **Actions** 标签页；
+  2. 在左侧选择 **`Release Automated Pipeline (Tauri v2 & Web)`**；
+  3. 点击右侧 **Run workflow** 按钮，输入版本号（如 `v2.8.0`），点击开始执行。
+
+### 3. 发布的构建包列表
+GitHub Release 页面将自动挂载以下 4 类构建产物：
+1. `BurnInX_<version>_x64-setup.exe`：Windows 64 位 NSIS 单文件一键安装程序；
+2. `BurnInX_<version>_x64_en-US.msi`：Windows Installer 规范企业级安装包；
+3. `BurnInX_<version>_arm64-setup.exe`：高通骁龙 X Elite / ARM64 Windows 设备专用轻量安装包；
+4. `burninx-web-standalone-<version>.zip`：Web 独立离线版（免安装，解压后双击即可在任何浏览器中运行）。
 
 ---
 

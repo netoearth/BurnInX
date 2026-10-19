@@ -1,4 +1,4 @@
-name: "Release Automated Pipeline (Tauri v2)"
+name: "Release Automated Pipeline (Tauri v2 & Web)"
 
 on:
   push:
@@ -15,7 +15,59 @@ permissions:
   contents: write
 
 jobs:
-  build-tauri:
+  create-release:
+    name: "Initialize GitHub Release"
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.create_release.outputs.result }}
+      version_tag: ${{ steps.get_version.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Determine Version Tag
+        id: get_version
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          else
+            TAG="${{ inputs.release_version || 'v2.8.0' }}"
+          fi
+          echo "version=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Create or Locate GitHub Release
+        id: create_release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = "${{ steps.get_version.outputs.version }}";
+            let release;
+            try {
+              const existing = await github.rest.repos.getReleaseByTag({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag: tag,
+              });
+              release = existing.data;
+              console.log(`Found existing release: ID ${release.id}`);
+            } catch (err) {
+              console.log(`Creating fresh release for tag: ${tag}`);
+              const created = await github.rest.repos.createRelease({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag_name: tag,
+                name: `BurnInX ${tag} - 硬件压力测试与运行监控平台`,
+                body: `### 🚀 BurnInX ${tag} 自动化发布\n\n🎉 欢迎使用 BurnInX 硬件综合压力测试与性能基准工具！\n\n#### 📦 包含构建产物：\n- **Windows x64 安装包**：\n  - \`BurnInX_${tag.replace(/^v/, '')}_x64-setup.exe\` (NSIS 单文件/一键安装引导器)\n  - \`BurnInX_${tag.replace(/^v/, '')}_x64_en-US.msi\` (Windows Installer 安装程序)\n- **Windows ARM64 安装包**（适用于骁龙 X Elite / ARM64 Windows 设备）：\n  - \`BurnInX_${tag.replace(/^v/, '')}_arm64-setup.exe\`\n- **Web 独立离线版**：\n  - \`burninx-web-standalone-${tag}.zip\` (解压缩后直接在任意现代浏览器中离线运行)\n\n#### ⚡ 最新核心功能与升级：\n1. **硬盘真实测速 (CrystalDiskMark 标准)**：100% 物理真实读写（零伪数据），支持自由挂载本地物理目录与全盘符管理，可在 Windows 任务管理器中实时观测读写活动。\n2. **硬件规格精准校准中心 (AIDA64 / CPU-Z Style)**：解决浏览器隐私保护导致的参数出入，支持热门 CPU/GPU/内存规格一键校准与全局持久化。\n3. **多流网络带宽测速**：实时检测公网 IP、电信运营商与地理归属地，真实多链路 CDN 吞吐测速。\n4. **GPU 视口最大化防卡死**：全屏 HUD 悬浮层与 WebGL 上下文保护，随时按 Esc 平滑恢复。\n5. **多通道分轨柱状图示波器**：各项传感器指标独立分轨，读数清晰无重叠。`,
+                draft: false,
+                prerelease: false,
+              });
+              release = created.data;
+            }
+            return release.id;
+
+  build-tauri-windows:
+    name: "Build Tauri Desktop (${{ matrix.arch_name }})"
+    needs: create-release
     permissions:
       contents: write
     strategy:
@@ -25,9 +77,11 @@ jobs:
           - platform: "windows-latest"
             target: "x86_64-pc-windows-msvc"
             arch_name: "x64"
+            bundle_args: ""
           - platform: "windows-latest"
             target: "aarch64-pc-windows-msvc"
             arch_name: "arm64"
+            bundle_args: "--bundles nsis"
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -48,35 +102,55 @@ jobs:
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
-          workspaces: "./src-tauri -> target"
+          workspaces: "src-tauri"
 
-      - name: Install npm dependencies
+      - name: Install dependencies
         run: npm ci
 
-      - name: Build Web Frontend
+      - name: Build Web Application
         run: npm run build
 
-      - name: Build Tauri Desktop Package
+      - name: Build Tauri Desktop Package & Attach to Release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_name || inputs.release_version }}
-          releaseName: "BurnInX ${{ github.ref_name || inputs.release_version }}"
-          releaseBody: |
-            ### BurnInX - 硬件压力测试与运行监控平台 (${{ matrix.arch_name }})
-            
-            🎉 感谢使用 BurnInX 桌面原生版！本版本采用 **Tauri v2** 原生架构构建。
-            
-            #### 核心亮点：
-            - **GPU 3D 渲染压力测试**：经典 FurMark 毛发甜甜圈着色器、未开始时完全待机、开始后解除帧率上限 (Unlimited FPS)。
-            - **独立 CPU / 内存压力测试**：多线程 AVX 矩阵乘法/哈希与大内存位翻转坏块检测。
-            - **x64 与 ARM64 深度适配**：x64 平台支持 DLSS / DLAA / 帧生成 / 光线重建；ARM64 平台按规范安全禁用并优化功耗。
-            - **专业 HTML 诊断报告**：内置矢量图表、热节流预警与单文件 HTML 独立离线导出。
-            
-            #### 安装包说明：
-            - `.msi`: Windows 安装程序包 (Windows Installer)
-            - `.exe`: NSIS 单文件/一键安装引导器
-          releaseDraft: false
-          prerelease: false
-          args: --target ${{ matrix.target }}
+          releaseId: ${{ needs.create-release.outputs.release_id }}
+          args: --target ${{ matrix.target }} ${{ matrix.bundle_args }}
+
+  build-web-standalone:
+    name: "Package Web Standalone ZIP"
+    needs: create-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Web Application
+        run: npm run build
+
+      - name: Package Web Offline ZIP
+        run: |
+          VERSION="${{ needs.create-release.outputs.version_tag }}"
+          cd dist
+          zip -r "../burninx-web-standalone-${VERSION}.zip" ./*
+          cd ..
+
+      - name: Upload Web Standalone Archive to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.create-release.outputs.version_tag }}
+          files: burninx-web-standalone-*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
