@@ -117,6 +117,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
+          tagName: ${{ needs.create-release.outputs.version_tag }}
           releaseId: ${{ needs.create-release.outputs.release_id }}
           args: --target ${{ matrix.target }} ${{ matrix.bundle_args }}
 
