@@ -174,6 +174,13 @@ export default function App() {
     }
   }, []);
 
+  const refreshHardwareSpecs = async () => {
+    setLoadingHardware(true);
+    const hardware = await detectSystemHardware();
+    setSpecs(hardware);
+    setLoadingHardware(false);
+  };
+
   // Sync benchRunning state whenever any load is active
   useEffect(() => {
     const anyActive = gpuEnabled || cpuEnabled || ramEnabled;
@@ -1094,11 +1101,11 @@ export default function App() {
         )}
 
         {activeTab === 'hardware' && (
-          <HardwareOverviewPanel specs={specs} />
+          <HardwareOverviewPanel specs={specs} onRefreshSpecs={refreshHardwareSpecs} />
         )}
 
         {activeTab === 'disk' && (
-          <DiskBenchmarkPanel />
+          <DiskBenchmarkPanel availableDrives={specs?.availableDrives} />
         )}
 
         {activeTab === 'network' && (

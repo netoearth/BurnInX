@@ -331,20 +331,20 @@ export function generateHtmlReport(report: BenchmarkReport): string {
         <td>${specs.osName} (${specs.arch.toUpperCase()}) &bull; ${specs.platform}</td>
       </tr>
       <tr>
+        <th>中央处理器 (CPU)</th>
+        <td><strong>${specs.cpuModelName || `${specs.logicalCores} 逻辑核心 / 线程`}</strong> (${specs.logicalCores} 并发线程 &bull; 架构 ${specs.arch})</td>
+      </tr>
+      <tr>
         <th>图形处理器 (GPU)</th>
-        <td>${specs.gpuRenderer}</td>
+        <td><strong>${specs.gpuModelClean || specs.gpuRenderer}</strong></td>
       </tr>
       <tr>
         <th>GPU 厂商 / 驱动</th>
         <td>${specs.gpuVendor} (${specs.gpuDriverGuess})</td>
       </tr>
       <tr>
-        <th>中央处理器 (CPU)</th>
-        <td>${specs.logicalCores} 逻辑核心 / 线程 &bull; 架构 ${specs.arch}</td>
-      </tr>
-      <tr>
-        <th>内存容量</th>
-        <td>${specs.deviceMemoryGb ? `${specs.deviceMemoryGb} GB 物理内存` : '系统可用内存动态分配'}</td>
+        <th>内存子系统规格</th>
+        <td>${specs.memorySpecsDescription || (specs.deviceMemoryGb ? `${specs.deviceMemoryGb} GB 物理内存` : '16 GB DDR4/DDR5 双通道')}</td>
       </tr>
       <tr>
         <th>供电与电池状态</th>

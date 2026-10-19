@@ -18,6 +18,36 @@ export interface NativeSysInfo {
   is_x64: boolean;
 }
 
+export interface NativeHardwareSpecs {
+  cpu_name: string;
+  logical_cores: number;
+  total_ram_gb: number;
+  available_ram_gb: number;
+  gpu_name: string;
+  os_name: string;
+  arch: string;
+}
+
+export interface NativeDriveInfo {
+  drive_letter: string;
+  path: string;
+  label: string;
+  total_gb: number;
+  free_gb: number;
+  is_ready: boolean;
+}
+
+export interface NativeDiskBenchOutput {
+  seq_write_mb_s: number;
+  seq_read_mb_s: number;
+  rnd_4k_write_iops: number;
+  rnd_4k_write_mb_s: number;
+  rnd_4k_read_iops: number;
+  rnd_4k_read_mb_s: number;
+  test_size_mb: number;
+  tested_path: string;
+}
+
 export async function getNativeSystemInfo(): Promise<NativeSysInfo | null> {
   if (!isTauriEnvironment()) return null;
   try {
@@ -26,6 +56,42 @@ export async function getNativeSystemInfo(): Promise<NativeSysInfo | null> {
   } catch (err) {
     console.warn('Tauri get_native_system_info call failed:', err);
     return null;
+  }
+}
+
+export async function getNativeHardwareSpecs(): Promise<NativeHardwareSpecs | null> {
+  if (!isTauriEnvironment()) return null;
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return await invoke<NativeHardwareSpecs>('get_native_hardware_specs');
+  } catch (err) {
+    console.warn('Tauri get_native_hardware_specs call failed:', err);
+    return null;
+  }
+}
+
+export async function getAvailableDisksNative(): Promise<NativeDriveInfo[]> {
+  if (!isTauriEnvironment()) return [];
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return await invoke<NativeDriveInfo[]>('get_available_disks');
+  } catch (err) {
+    console.warn('Tauri get_available_disks call failed:', err);
+    return [];
+  }
+}
+
+export async function benchmarkDiskNative(drivePath?: string, sizeMb?: number): Promise<NativeDiskBenchOutput | null> {
+  if (!isTauriEnvironment()) return null;
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return await invoke<NativeDiskBenchOutput>('benchmark_disk_native', {
+      drivePath: drivePath || null,
+      sizeMb: sizeMb || 128,
+    });
+  } catch (err) {
+    console.warn('Tauri benchmark_disk_native call failed:', err);
+    throw err;
   }
 }
 

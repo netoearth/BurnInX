@@ -10,10 +10,13 @@ export interface SystemSpecs {
   isArm64: boolean;
   isX64: boolean;
   logicalCores: number;
+  cpuModelName?: string;
   deviceMemoryGb: number | null;
+  memorySpecsDescription?: string;
   userAgent: string;
   gpuVendor: string;
   gpuRenderer: string;
+  gpuModelClean?: string;
   gpuDriverGuess: string;
   isNvidiaRtx: boolean;
   isRtx40SeriesOrNewer: boolean;
@@ -35,6 +38,13 @@ export interface SystemSpecs {
     rayReconstructionSupported: boolean;
     arm64RestrictionReason?: string;
   };
+  availableDrives?: Array<{
+    letter: string;
+    path: string;
+    label: string;
+    totalGb: number;
+    freeGb: number;
+  }>;
 }
 
 export type DlssMode = 'off' | 'quality' | 'balanced' | 'performance' | 'ultra_performance';

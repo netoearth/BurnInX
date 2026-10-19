@@ -9,17 +9,13 @@ import { GpuSettings, SystemSpecs } from '../types/benchmark';
 import {
   Play,
   Flame,
-  ShieldAlert,
-  Cpu,
   Sparkles,
-  Layers,
-  RefreshCw,
-  Zap,
   Maximize2,
   Minimize2,
   Expand,
   Shrink,
-  Sliders,
+  Zap,
+  RotateCcw,
 } from 'lucide-react';
 
 interface GpuViewportProps {
@@ -80,7 +76,7 @@ const furFragmentShader = `
   float heavyNoiseLoop(vec2 p) {
     float total = 0.0;
     float amp = 1.0;
-    for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < 6; i++) {
       total += hash(p * float(i + 1) + uTime * 0.1) * amp;
       p = p * 1.7 + vec2(1.2, 3.4);
       amp *= 0.5;
@@ -90,10 +86,10 @@ const furFragmentShader = `
 
   void main() {
     // Sample strand alpha from noise texture
-    vec4 noiseSample = texture2D(uFurNoise, vUv * vec2(24.0, 12.0));
+    vec4 noiseSample = texture2D(uFurNoise, vUv * vec2(20.0, 10.0));
     
-    // Heavy ALU computation
-    float heavyAlu = heavyNoiseLoop(vUv * 8.0);
+    // Controlled ALU computation to prevent driver TDR
+    float heavyAlu = heavyNoiseLoop(vUv * 6.0);
 
     float layerRatio = uShellIndex / uTotalShells;
     float strandCutoff = layerRatio * 0.85;
@@ -114,7 +110,7 @@ const furFragmentShader = `
     vec3 viewDir = normalize(cameraPosition - vWorldPos);
     float rim = 1.0 - max(dot(viewDir, vNormal), 0.0);
     finalColor += vec3(1.0, 0.6, 0.1) * pow(rim, 3.0) * 0.8;
-    finalColor += heavyAlu * 0.05;
+    finalColor += heavyAlu * 0.04;
 
     float alpha = max(0.25, 1.0 - layerRatio * 0.75);
     gl_FragColor = vec4(finalColor, alpha);
@@ -138,7 +134,7 @@ export const GpuViewport: React.FC<GpuViewportProps> = ({
   const meshesGroupRef = useRef<THREE.Group | null>(null);
   const particlesRef = useRef<THREE.Points | null>(null);
   const uniformsRef = useRef<{ uTime: { value: number } }>({ uTime: { value: 0 } });
-  const [stressMultiplier, setStressMultiplier] = useState<number>(4); // 1x, 4x, 8x GPU load multiplier
+  const [stressMultiplier, setStressMultiplier] = useState<number>(2); // 1x, 2x, 4x GPU load multiplier
 
   // Internal maximize state if not controlled
   const [internalMaximized, setInternalMaximized] = useState<boolean>(false);
@@ -183,6 +179,18 @@ export const GpuViewport: React.FC<GpuViewportProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [effectiveMaximized, toggleMaximize]);
 
+  // Lock body scroll when maximized
+  useEffect(() => {
+    if (effectiveMaximized) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [effectiveMaximized]);
+
   const fpsTrackerRef = useRef<{
     lastTime: number;
     frames: number;
@@ -224,8 +232,8 @@ export const GpuViewport: React.FC<GpuViewportProps> = ({
   const createFurDonutScene = (scene: THREE.Scene, furLayers: number, furTexture: THREE.Texture) => {
     const group = new THREE.Group();
 
-    // 1. High-polygon base Torus
-    const torusGeo = new THREE.TorusGeometry(2.4, 0.95, 48, 96);
+    // 1. Base Torus
+    const torusGeo = new THREE.TorusGeometry(2.4, 0.95, 40, 80);
     const coreMat = new THREE.MeshStandardMaterial({
       color: 0xff4400,
       emissive: 0xcc2200,
@@ -236,11 +244,11 @@ export const GpuViewport: React.FC<GpuViewportProps> = ({
     const coreMesh = new THREE.Mesh(torusGeo, coreMat);
     group.add(coreMesh);
 
-    // 2. High-Stress Multi-Shell Fur Layers with custom GLSL Shader
-    const shellCount = Math.max(16, Math.min(furLayers, 64));
+    // 2. Multi-Shell Fur Layers with custom GLSL Shader
+    const shellCount = Math.max(16, Math.min(furLayers, 48));
 
     for (let s = 1; s <= shellCount; s++) {
-      const shellGeo = new THREE.TorusGeometry(2.4, 0.95, 36, 72);
+      const shellGeo = new THREE.TorusGeometry(2.4, 0.95, 32, 64);
 
       const shellMat = new THREE.ShaderMaterial({
         vertexShader: furVertexShader,
@@ -261,7 +269,7 @@ export const GpuViewport: React.FC<GpuViewportProps> = ({
     }
 
     // 3. Central pulsating vortex core
-    const coreGeo = new THREE.IcosahedronGeometry(1.2, 4);
+    const coreGeo = new THREE.IcosahedronGeometry(1.2, 3);
     const innerCoreMat = new THREE.MeshBasicMaterial({
       color: 0xffaa00,
       wireframe: true,
@@ -273,7 +281,7 @@ export const GpuViewport: React.FC<GpuViewportProps> = ({
     meshesGroupRef.current = group;
 
     // 4. Volumetric Ember & Particle Storm
-    const pCount = settings.particleCount || 15000;
+    const pCount = Math.min(settings.particleCount || 10000, 15000);
     const pGeo = new THREE.BufferGeometry();
     const pPos = new Float32Array(pCount * 3);
     const pColors = new Float32Array(pCount * 3);
@@ -308,29 +316,47 @@ export const GpuViewport: React.FC<GpuViewportProps> = ({
     particlesRef.current = particles;
   };
 
-  // Re-size when effectiveMaximized changes
+  // Resize function
+  const updateRendererSize = useCallback(() => {
+    const container = containerRef.current;
+    const renderer = rendererRef.current;
+    const camera = cameraRef.current;
+    if (!container || !renderer || !camera) return;
+
+    const w = effectiveMaximized ? window.innerWidth : (container.clientWidth || 800);
+    const h = effectiveMaximized ? window.innerHeight : (container.clientHeight || 420);
+    const dpr = Math.min(window.devicePixelRatio || 1, effectiveMaximized ? 1.5 : 2) * (settings.renderScale || 1.0);
+
+    camera.aspect = Math.max(0.1, w / Math.max(1, h));
+    camera.updateProjectionMatrix();
+    renderer.setPixelRatio(dpr);
+    renderer.setSize(w, h);
+    setActiveRes(`${Math.round(w)} × ${Math.round(h)} (@${dpr.toFixed(1)}x)`);
+
+    if (settings.x64Options.dlssMode !== 'off') {
+      const scaleMap = {
+        quality: 0.67,
+        balanced: 0.58,
+        performance: 0.50,
+        ultra_performance: 0.33,
+      };
+      const scale = scaleMap[settings.x64Options.dlssMode] || 0.67;
+      setInternalRes(`${Math.round(w * scale)} × ${Math.round(h * scale)}`);
+    } else {
+      setInternalRes(`${Math.round(w)} × ${Math.round(h)}`);
+    }
+  }, [effectiveMaximized, settings.renderScale, settings.x64Options.dlssMode]);
+
+  // Trigger resize on effectiveMaximized change
   useEffect(() => {
-    const handleResize = () => {
-      const container = containerRef.current;
-      if (!container || !rendererRef.current || !cameraRef.current) return;
-      const w = container.clientWidth || window.innerWidth;
-      const h = container.clientHeight || (effectiveMaximized ? window.innerHeight : 420);
-      const dpr = Math.min(window.devicePixelRatio || 1, 2) * (settings.renderScale || 1.0);
-
-      cameraRef.current.aspect = Math.max(0.1, w / Math.max(1, h));
-      cameraRef.current.updateProjectionMatrix();
-      rendererRef.current.setSize(w, h);
-      setActiveRes(`${w} × ${h} (@${dpr.toFixed(1)}x)`);
-    };
-
-    handleResize();
-    const t1 = setTimeout(handleResize, 50);
-    const t2 = setTimeout(handleResize, 200);
+    updateRendererSize();
+    const t1 = setTimeout(updateRendererSize, 50);
+    const t2 = setTimeout(updateRendererSize, 150);
     return () => {
       clearTimeout(t1);
       clearTimeout(t2);
     };
-  }, [effectiveMaximized, settings.renderScale]);
+  }, [effectiveMaximized, updateRendererSize]);
 
   // Main Three.js Lifecycle
   useEffect(() => {
@@ -359,15 +385,15 @@ export const GpuViewport: React.FC<GpuViewportProps> = ({
     sceneRef.current = scene;
 
     // 2. Camera Setup
-    const w = container.clientWidth || 800;
-    const h = container.clientHeight || 420;
+    const w = effectiveMaximized ? window.innerWidth : (container.clientWidth || 800);
+    const h = effectiveMaximized ? window.innerHeight : (container.clientHeight || 420);
     const camera = new THREE.PerspectiveCamera(50, w / h, 0.1, 100);
     camera.position.set(0, 1.2, 6.8);
     camera.lookAt(0, 0, 0);
     cameraRef.current = camera;
 
-    // 3. Renderer with Unlocked VSync / MSAA Simulation
-    const dpr = Math.min(window.devicePixelRatio || 1, 2) * settings.renderScale;
+    // 3. Renderer with Unlocked VSync & Context Loss Handling
+    const dpr = Math.min(window.devicePixelRatio || 1, effectiveMaximized ? 1.5 : 2) * (settings.renderScale || 1.0);
     const renderer = new THREE.WebGLRenderer({
       antialias: settings.msaa,
       powerPreference: 'high-performance',
@@ -379,22 +405,24 @@ export const GpuViewport: React.FC<GpuViewportProps> = ({
     renderer.toneMappingExposure = 1.35;
     rendererRef.current = renderer;
 
-    container.appendChild(renderer.domElement);
-    setActiveRes(`${w} × ${h} (@${dpr}x)`);
+    const glCanvas = renderer.domElement;
+    glCanvas.className = 'w-full h-full block';
 
-    // Calculate simulated internal resolution for DLSS
-    if (settings.x64Options.dlssMode !== 'off') {
-      const scaleMap = {
-        quality: 0.67,
-        balanced: 0.58,
-        performance: 0.50,
-        ultra_performance: 0.33,
-      };
-      const scale = scaleMap[settings.x64Options.dlssMode] || 0.67;
-      setInternalRes(`${Math.round(w * scale)} × ${Math.round(h * scale)}`);
-    } else {
-      setInternalRes(`${w} × ${h}`);
-    }
+    // Handle WebGL Context Lost to prevent permanent freeze
+    const handleContextLost = (e: Event) => {
+      e.preventDefault();
+      console.warn('BurnInX GPU: WebGL Context Lost detected, pausing loop...');
+      if (animFrameId.current) cancelAnimationFrame(animFrameId.current);
+    };
+
+    const handleContextRestored = () => {
+      console.log('BurnInX GPU: WebGL Context Restored, restarting loop...');
+    };
+
+    glCanvas.addEventListener('webglcontextlost', handleContextLost, false);
+    glCanvas.addEventListener('webglcontextrestored', handleContextRestored, false);
+
+    container.appendChild(glCanvas);
 
     // 4. Lighting Rig
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
@@ -418,14 +446,14 @@ export const GpuViewport: React.FC<GpuViewportProps> = ({
     fpsTrackerRef.current.frames = 0;
 
     const renderTick = () => {
-      const delta = clock.getDelta();
+      if (!rendererRef.current || !sceneRef.current || !cameraRef.current) return;
+
       const elapsedTotal = clock.getElapsedTime();
       const now = performance.now();
 
       uniformsRef.current.uTime.value = elapsedTotal;
 
       if (meshesGroupRef.current) {
-        // Continuous rotation on two axes
         meshesGroupRef.current.rotation.x = elapsedTotal * 0.45;
         meshesGroupRef.current.rotation.y = elapsedTotal * 0.75;
       }
@@ -434,8 +462,10 @@ export const GpuViewport: React.FC<GpuViewportProps> = ({
         particlesRef.current.rotation.y = -elapsedTotal * 0.25;
       }
 
-      // Render Passes (Stress Multiplier simulates multiple sub-passes to uncap load)
-      const passes = settings.unlimitedFps ? stressMultiplier : 1;
+      // Safe passes count: In maximized mode, limit to 2 passes per frame to avoid GPU driver timeout
+      const maxPasses = effectiveMaximized ? Math.min(stressMultiplier, 2) : stressMultiplier;
+      const passes = settings.unlimitedFps ? maxPasses : 1;
+
       for (let p = 0; p < passes; p++) {
         renderer.render(scene, camera);
       }
@@ -463,25 +493,26 @@ export const GpuViewport: React.FC<GpuViewportProps> = ({
 
     renderTick();
 
-    const handleResize = () => {
-      if (!container || !rendererRef.current || !cameraRef.current) return;
-      const nw = container.clientWidth || window.innerWidth;
-      const nh = container.clientHeight || (effectiveMaximized ? window.innerHeight : 420);
-      cameraRef.current.aspect = nw / nh;
-      cameraRef.current.updateProjectionMatrix();
-      rendererRef.current.setSize(nw, nh);
-      setActiveRes(`${nw} × ${nh} (@${dpr}x)`);
+    const handleWindowResize = () => {
+      updateRendererSize();
     };
 
-    window.addEventListener('resize', handleResize);
+    window.addEventListener('resize', handleWindowResize);
 
     return () => {
-      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('resize', handleWindowResize);
+      glCanvas.removeEventListener('webglcontextlost', handleContextLost);
+      glCanvas.removeEventListener('webglcontextrestored', handleContextRestored);
+
       if (animFrameId.current) {
         cancelAnimationFrame(animFrameId.current);
+        animFrameId.current = null;
       }
       if (renderer) {
         renderer.dispose();
+      }
+      if (container.contains(glCanvas)) {
+        container.removeChild(glCanvas);
       }
     };
   }, [
@@ -494,13 +525,16 @@ export const GpuViewport: React.FC<GpuViewportProps> = ({
     settings.x64Options.frameGeneration,
     settings.particleCount,
     stressMultiplier,
+    effectiveMaximized,
+    onFpsUpdate,
+    updateRendererSize,
   ]);
 
   return (
     <div
-      className={`bg-slate-950 overflow-hidden transition-all duration-200 flex flex-col justify-center items-center ${
+      className={`bg-slate-950 overflow-hidden flex flex-col justify-center items-center ${
         effectiveMaximized
-          ? 'fixed inset-0 z-50 w-screen h-screen rounded-none border-none shadow-none'
+          ? 'fixed inset-0 z-[9999] w-screen h-screen m-0 p-0 rounded-none border-none shadow-none'
           : 'relative w-full h-full min-h-[380px] rounded-lg border border-slate-800 shadow-2xl'
       }`}
     >
@@ -517,7 +551,7 @@ export const GpuViewport: React.FC<GpuViewportProps> = ({
             GPU 三维压力场景待机中
           </h3>
           <p className="text-xs text-slate-400 mb-5 leading-relaxed">
-            未开始 GPU 测试时保持关闭，0% 显卡负载与能耗。可单独运行 CPU 或内存压测。开始后将激活高负荷 FurMark 着色器并解除帧率上限。
+            未开始 GPU 测试时保持关闭，0% 显卡负载与能耗。开始后将激活高负荷 FurMark 甜甜圈着色器并解除帧率上限。
           </p>
           <div className="flex flex-col gap-2.5">
             <button
@@ -545,24 +579,24 @@ export const GpuViewport: React.FC<GpuViewportProps> = ({
                 )}
               </button>
             </div>
-            <div className="text-[11px] text-slate-400 mt-1">
-              显卡: {specs?.gpuRenderer || '检测中...'}
+            <div className="text-[11px] text-slate-400 mt-1 font-mono">
+              显卡: {specs?.gpuModelClean || specs?.gpuRenderer || '检测中...'}
             </div>
           </div>
         </div>
       )}
 
-      {/* Floating Header Controls when GPU is RUNNING (or in Standby Maximized) */}
-      <div className="absolute top-3 left-3 right-3 z-20 flex items-center justify-between pointer-events-none">
+      {/* Floating Header Controls */}
+      <div className="absolute top-3 left-3 right-3 z-30 flex items-center justify-between pointer-events-none">
         {/* Left OSD HUD */}
         <div className="flex flex-col gap-1.5 pointer-events-auto">
           {gpuEnabled && (
             <>
-              <div className="flex items-center gap-2 px-2.5 py-1 bg-slate-950/85 backdrop-blur-md border border-slate-800 rounded text-xs text-slate-200">
+              <div className="flex items-center gap-2 px-2.5 py-1 bg-slate-950/90 backdrop-blur-md border border-slate-800 rounded text-xs text-slate-200">
                 <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
                 <span className="font-mono font-bold text-amber-400">
-                  GPU 核心满载压测中
-                  {effectiveMaximized ? ' [全屏最大化]' : ''}
+                  GPU 核心压测中
+                  {effectiveMaximized ? ' [已全屏最大化]' : ''}
                 </span>
                 <span className="text-slate-500">|</span>
                 <span className="font-mono text-emerald-400 font-bold">
@@ -570,20 +604,20 @@ export const GpuViewport: React.FC<GpuViewportProps> = ({
                 </span>
               </div>
 
-              <div className="flex items-center gap-2 px-2.5 py-1 bg-slate-950/85 backdrop-blur-md border border-slate-800 rounded text-[11px] text-slate-300">
+              <div className="flex items-center gap-2 px-2.5 py-1 bg-slate-950/90 backdrop-blur-md border border-slate-800 rounded text-[11px] text-slate-300">
                 <span>视口:</span>
                 <span className="font-mono text-emerald-400">{activeRes}</span>
                 <span className="text-slate-500">|</span>
                 <span>内部:</span>
                 <span className="font-mono text-cyan-400">{internalRes}</span>
                 <span className="text-slate-500">|</span>
-                <span className="font-mono text-slate-400 truncate max-w-[200px]">
-                  {specs?.gpuRenderer.split('/')[0]}
+                <span className="font-mono text-slate-400 truncate max-w-[200px]" title={specs?.gpuModelClean || specs?.gpuRenderer}>
+                  {specs?.gpuModelClean || specs?.gpuRenderer}
                 </span>
               </div>
 
               {settings.x64Options.frameGeneration && (
-                <div className="flex items-center gap-1.5 px-2.5 py-1 bg-indigo-950/85 backdrop-blur-md border border-indigo-700/60 rounded text-[11px] text-indigo-300">
+                <div className="flex items-center gap-1.5 px-2.5 py-1 bg-indigo-950/90 backdrop-blur-md border border-indigo-700/60 rounded text-[11px] text-indigo-300">
                   <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
                   <span>DLSS 帧生成已激活: 2X 视觉平滑插帧模式</span>
                 </div>
@@ -599,7 +633,7 @@ export const GpuViewport: React.FC<GpuViewportProps> = ({
               <span className="text-slate-400 px-1.5 flex items-center gap-1">
                 <Zap className="w-3 h-3 text-amber-400" /> 压测负荷:
               </span>
-              {[1, 2, 4, 8].map((mult) => (
+              {[1, 2, 4].map((mult) => (
                 <button
                   key={mult}
                   onClick={() => setStressMultiplier(mult)}
@@ -651,26 +685,27 @@ export const GpuViewport: React.FC<GpuViewportProps> = ({
       </div>
 
       {/* Bottom Floating Bar in Maximized Mode */}
-      {effectiveMaximized && gpuEnabled && (
-        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20 flex items-center gap-4 px-4 py-2 bg-slate-950/85 backdrop-blur-md border border-slate-800/80 rounded-full text-xs text-slate-300 shadow-2xl">
+      {effectiveMaximized && (
+        <div className="absolute bottom-5 left-1/2 -translate-x-1/2 z-30 flex items-center gap-4 px-5 py-2.5 bg-slate-950/90 backdrop-blur-md border border-slate-800/80 rounded-full text-xs text-slate-300 shadow-2xl">
           <div className="flex items-center gap-1.5">
-            <Flame className="w-3.5 h-3.5 text-orange-500" />
-            <span>FurMark 甜甜圈高压渲染</span>
+            <Flame className="w-4 h-4 text-orange-500" />
+            <span className="font-semibold">FurMark 甜甜圈高压渲染中</span>
           </div>
           <span className="text-slate-600">|</span>
-          <div className="font-mono text-emerald-400 font-bold">
-            实时帧率: {liveFps.toFixed(0)} FPS
+          <div className="font-mono text-emerald-400 font-bold text-sm">
+            {liveFps.toFixed(0)} FPS
           </div>
           <span className="text-slate-600">|</span>
           <div className="font-mono text-blue-400">
-            帧延迟: {liveFrametime.toFixed(1)} ms
+            {liveFrametime.toFixed(1)} ms
           </div>
           <span className="text-slate-600">|</span>
           <button
             onClick={toggleMaximize}
-            className="text-amber-400 hover:text-amber-300 font-medium underline cursor-pointer"
+            className="flex items-center gap-1 px-3 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 rounded-full font-bold cursor-pointer transition-all"
           >
-            按 ESC 还原
+            <Minimize2 className="w-3 h-3" />
+            <span>按 ESC 键或点击退出全屏</span>
           </button>
         </div>
       )}
