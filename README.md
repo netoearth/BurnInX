@@ -226,6 +226,10 @@ npm run build:tauri
 ```
 编译产物将生成在 `src-tauri/target/release/bundle/` 目录下（包括 `.msi` 安装包与 `.exe` 安装引导程序）。
 
+> 💡 **Windows RC.EXE 图标规范（3.00 格式）说明**：  
+> Windows 平台的微软资源编译器 (`RC.EXE`) 在打包应用 `.rc` 脚本时，要求 `icon.ico` 必须为标准的 Windows 3.00 DIB 位图格式（`BITMAPINFOHEADER` 大小为 40 字节），不可为纯 PNG 压缩或伪装伪后缀文件。  
+> 本项目已提供全套工业级生成脚本：执行 `npm run generate:icons` 即可自动将母版生成 100% 兼容 Windows 3.00 规范的真彩全尺寸 ICO（包含 16x16 至 256x256 完整分级）、macOS `.icns` 以及多规格高清 PNG 资产。
+
 ---
 
 ## 🤖 GitHub Actions 自动化编译与全平台发布流程
